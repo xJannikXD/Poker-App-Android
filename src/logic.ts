@@ -1,13 +1,16 @@
-// Pure game logic: no React, no storage. All money values are integer cents
-// so that sums never suffer from floating point rounding.
+// Pure game logic: no React, no storage. Money values are integer cents and
+// chip counts are integers, so sums never suffer from floating point rounding.
 
 export type Player = {
   id: string;
   name: string;
   /** How often the player bought in (initial buy-in counts as 1). */
   buyIns: number;
-  /** Final stack in cents, entered at the end of the game. */
-  finalCents: number | null;
+  /**
+   * Final stack entered at the end of the game: cents in money mode,
+   * chips when the game has `chipsPerBuyIn` set.
+   */
+  final: number | null;
 };
 
 export type Phase = 'setup' | 'playing' | 'ending' | 'result';
@@ -16,6 +19,8 @@ export type Game = {
   phase: Phase;
   buyInCents: number;
   currency: string;
+  /** Chips handed out per buy-in, or null when final stacks are entered as money. */
+  chipsPerBuyIn: number | null;
   players: Player[];
   startedAt: number | null;
 };
@@ -23,7 +28,14 @@ export type Game = {
 export type Transfer = { from: string; to: string; cents: number };
 
 export function newGame(): Game {
-  return { phase: 'setup', buyInCents: 1000, currency: '€', players: [], startedAt: null };
+  return {
+    phase: 'setup',
+    buyInCents: 1000,
+    currency: '€',
+    chipsPerBuyIn: null,
+    players: [],
+    startedAt: null,
+  };
 }
 
 let idCounter = 0;
@@ -49,15 +61,45 @@ export function parseMoney(input: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+/** Parses a whole chip count like "1500" or "1.500". */
+export function parseChips(input: string): number | null {
+  const s = input.trim().replace(/[\s.]/g, '');
+  if (!/^\d+$/.test(s)) return null;
+  const value = parseInt(s, 10);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function groupThousands(n: number): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
 export function formatMoney(cents: number, currency: string, withSign = false): string {
   const sign = cents < 0 ? '-' : withSign && cents > 0 ? '+' : '';
   const abs = Math.abs(cents);
-  const euros = Math.floor(abs / 100)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const euros = groupThousands(Math.floor(abs / 100));
   const rest = abs % 100;
   const amount = rest === 0 ? euros : `${euros},${rest.toString().padStart(2, '0')}`;
   return `${sign}${amount} ${currency}`.trim();
+}
+
+export function formatChips(chips: number, withSign = false): string {
+  const sign = chips < 0 ? '-' : withSign && chips > 0 ? '+' : '';
+  return `${sign}${groupThousands(Math.abs(chips))} Chips`;
+}
+
+/** Stack size per buy-in in the unit final stacks are entered in. */
+export function stackPerBuyIn(game: Game): number {
+  return game.chipsPerBuyIn ?? game.buyInCents;
+}
+
+export function parseStack(input: string, game: Game): number | null {
+  return game.chipsPerBuyIn === null ? parseMoney(input) : parseChips(input);
+}
+
+export function formatStack(value: number, game: Game, withSign = false): string {
+  return game.chipsPerBuyIn === null
+    ? formatMoney(value, game.currency, withSign)
+    : formatChips(value, withSign);
 }
 
 export function investedCents(player: Player, buyInCents: number): number {
@@ -68,13 +110,37 @@ export function totalPotCents(game: Game): number {
   return game.players.reduce((sum, p) => sum + investedCents(p, game.buyInCents), 0);
 }
 
-export function totalFinalCents(game: Game): number {
-  return game.players.reduce((sum, p) => sum + (p.finalCents ?? 0), 0);
+/** Everything that was bought in, in stack units (cents or chips). */
+export function totalPotStack(game: Game): number {
+  return game.players.reduce((sum, p) => sum + p.buyIns * stackPerBuyIn(game), 0);
 }
 
-/** Final stack minus everything the player paid in. Positive = won. */
-export function netCents(player: Player, buyInCents: number): number {
-  return (player.finalCents ?? 0) - investedCents(player, buyInCents);
+/** Sum of all entered final stacks, in stack units (cents or chips). */
+export function totalFinalStack(game: Game): number {
+  return game.players.reduce((sum, p) => sum + (p.final ?? 0), 0);
+}
+
+/**
+ * Win (+) or loss (-) of every player in cents, in the same order as
+ * `game.players`. In chip mode the chip difference is converted to money;
+ * rounding leftovers go to the players with the largest remainders so the
+ * nets still sum to exactly zero.
+ */
+export function netsCents(game: Game): number[] {
+  const perBuyIn = stackPerBuyIn(game);
+  const diffs = game.players.map((p) => (p.final ?? 0) - p.buyIns * perBuyIn);
+  if (game.chipsPerBuyIn === null) return diffs;
+
+  const chips = game.chipsPerBuyIn;
+  const scaled = diffs.map((d) => d * game.buyInCents);
+  const nets = scaled.map((s) => Math.floor(s / chips));
+  const remainders = scaled.map((s, i) => s - nets[i] * chips);
+  const missing = Math.round(remainders.reduce((a, b) => a + b, 0) / chips);
+  const order = remainders
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => b.r - a.r || a.i - b.i);
+  for (let k = 0; k < missing && k < order.length; k++) nets[order[k].i] += 1;
+  return nets;
 }
 
 /**
@@ -83,11 +149,12 @@ export function netCents(player: Player, buyInCents: number): number {
  * Requires the nets to sum to zero (i.e. final stacks == pot).
  */
 export function settle(game: Game): Transfer[] {
+  const nets = netsCents(game);
   const debtors = game.players
-    .map((p) => ({ name: p.name, amount: -netCents(p, game.buyInCents) }))
+    .map((p, i) => ({ name: p.name, amount: -nets[i] }))
     .filter((d) => d.amount > 0);
   const creditors = game.players
-    .map((p) => ({ name: p.name, amount: netCents(p, game.buyInCents) }))
+    .map((p, i) => ({ name: p.name, amount: nets[i] }))
     .filter((c) => c.amount > 0);
 
   const transfers: Transfer[] = [];
@@ -106,17 +173,27 @@ export function settle(game: Game): Transfer[] {
   return transfers;
 }
 
+/** Players with their net result, biggest winner first. */
+export function ranking(game: Game): { player: Player; net: number }[] {
+  const nets = netsCents(game);
+  return game.players
+    .map((player, i) => ({ player, net: nets[i] }))
+    .sort((a, b) => b.net - a.net);
+}
+
+export function buyInLabel(game: Game): string {
+  const money = formatMoney(game.buyInCents, game.currency);
+  return game.chipsPerBuyIn === null ? money : `${money} = ${formatChips(game.chipsPerBuyIn)}`;
+}
+
 export function resultText(game: Game): string {
   const lines: string[] = [];
-  lines.push(`Poker-Abrechnung (Buy-in ${formatMoney(game.buyInCents, game.currency)})`);
+  lines.push(`Poker-Abrechnung (Buy-in ${buyInLabel(game)})`);
   lines.push('');
-  const sorted = [...game.players].sort(
-    (a, b) => netCents(b, game.buyInCents) - netCents(a, game.buyInCents),
-  );
-  for (const p of sorted) {
+  for (const { player, net } of ranking(game)) {
     lines.push(
-      `${p.name}: ${formatMoney(netCents(p, game.buyInCents), game.currency, true)} ` +
-        `(${p.buyIns}x eingekauft, Ende ${formatMoney(p.finalCents ?? 0, game.currency)})`,
+      `${player.name}: ${formatMoney(net, game.currency, true)} ` +
+        `(${player.buyIns}x eingekauft, Ende ${formatStack(player.final ?? 0, game)})`,
     );
   }
   lines.push('');

@@ -15,17 +15,24 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  buyInLabel,
+  formatChips,
   formatMoney,
+  formatStack,
   Game,
   investedCents,
-  netCents,
   newGame,
   newId,
+  parseChips,
   parseMoney,
+  parseStack,
+  Player,
+  ranking,
   resultText,
   settle,
-  totalFinalCents,
+  totalFinalStack,
   totalPotCents,
+  totalPotStack,
 } from './src/logic';
 import { loadGame, saveGame } from './src/storage';
 
@@ -52,6 +59,24 @@ function confirm(title: string, message: string, onYes: () => void) {
   ]);
 }
 
+/** Returns an error message if the name can't be added, otherwise null. */
+function nameError(name: string, players: Player[]): string | null {
+  const trimmed = name.trim().toLowerCase();
+  if (trimmed && players.some((p) => p.name.toLowerCase() === trimmed)) {
+    return 'Name ist schon vergeben';
+  }
+  return null;
+}
+
+function addPlayer(game: Game, name: string): Game | null {
+  const trimmed = name.trim();
+  if (!trimmed || nameError(trimmed, game.players)) return null;
+  return {
+    ...game,
+    players: [...game.players, { id: newId(), name: trimmed, buyIns: 1, final: null }],
+  };
+}
+
 export default function App() {
   const [game, setGame] = useState<Game | null>(null);
 
@@ -67,10 +92,8 @@ export default function App() {
     <SafeAreaProvider>
       <SafeAreaView style={styles.safe}>
         <StatusBar style="light" />
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        {/* Android draws edge-to-edge, so the keyboard needs padding there as well. */}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           {game && <Screen game={game} setGame={setGame} />}
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -97,21 +120,26 @@ function Screen(props: ScreenProps) {
 
 function SetupScreen({ game, setGame }: ScreenProps) {
   const [buyIn, setBuyIn] = useState(formatMoney(game.buyInCents, '').trim());
+  const [chips, setChips] = useState(String(game.chipsPerBuyIn ?? 1000));
   const [name, setName] = useState('');
   const buyInCents = parseMoney(buyIn);
-  const names = game.players.map((p) => p.name.toLowerCase());
+  const chipsPerBuyIn = parseChips(chips);
+  const chipMode = game.chipsPerBuyIn !== null;
+  const buyInValid = buyInCents !== null && buyInCents > 0;
+  const chipsValid = !chipMode || (chipsPerBuyIn !== null && chipsPerBuyIn > 0);
 
-  const addPlayer = () => {
-    const trimmed = name.trim();
-    if (!trimmed || names.includes(trimmed.toLowerCase())) return;
-    setGame({
-      ...game,
-      players: [...game.players, { id: newId(), name: trimmed, buyIns: 1, finalCents: null }],
-    });
-    setName('');
+  const submitName = () => {
+    const next = addPlayer(game, name);
+    if (next) {
+      setGame(next);
+      setName('');
+    }
   };
 
-  const canStart = game.players.length >= 2 && buyInCents !== null && buyInCents > 0;
+  const setChipMode = (on: boolean) =>
+    setGame({ ...game, chipsPerBuyIn: on ? (chipsPerBuyIn && chipsPerBuyIn > 0 ? chipsPerBuyIn : 1000) : null });
+
+  const canStart = game.players.length >= 2 && buyInValid && chipsValid;
 
   return (
     <Page title="Neues Spiel" subtitle="Start-Geld festlegen und Spieler hinzufügen">
@@ -138,7 +166,37 @@ function SetupScreen({ game, setGame }: ScreenProps) {
             placeholderTextColor={C.muted}
           />
         </View>
-        {buyInCents === null && buyIn !== '' && <Text style={styles.error}>Ungültiger Betrag</Text>}
+        {!buyInValid && buyIn !== '' && <Text style={styles.error}>Ungültiger Betrag</Text>}
+
+        <Text style={[styles.label, { marginTop: 18 }]}>Endstände zählen in</Text>
+        <Segmented
+          options={['Geld', 'Chips']}
+          selected={chipMode ? 1 : 0}
+          onSelect={(i) => setChipMode(i === 1)}
+        />
+        {chipMode && (
+          <>
+            <View style={[styles.row, { marginTop: 10 }]}>
+              <Text style={[styles.muted, { flex: 1, fontSize: 15 }]}>
+                {formatMoney(buyInValid ? buyInCents : game.buyInCents, game.currency)} =
+              </Text>
+              <TextInput
+                style={[styles.input, { width: 120, textAlign: 'right' }]}
+                value={chips}
+                onChangeText={(t) => {
+                  setChips(t);
+                  const value = parseChips(t);
+                  if (value !== null && value > 0) setGame({ ...game, chipsPerBuyIn: value });
+                }}
+                keyboardType="number-pad"
+                placeholder="1000"
+                placeholderTextColor={C.muted}
+              />
+              <Text style={[styles.muted, { marginLeft: 8, fontSize: 15 }]}>Chips</Text>
+            </View>
+            {!chipsValid && <Text style={styles.error}>Ungültige Chip-Anzahl</Text>}
+          </>
+        )}
       </Card>
 
       <Card>
@@ -150,15 +208,15 @@ function SetupScreen({ game, setGame }: ScreenProps) {
             onChangeText={setName}
             placeholder="Name"
             placeholderTextColor={C.muted}
-            onSubmitEditing={addPlayer}
+            onSubmitEditing={submitName}
             submitBehavior="submit"
             returnKeyType="done"
             autoCapitalize="words"
           />
-          <Button label="+" onPress={addPlayer} style={{ marginLeft: 8, width: 52 }} />
+          <Button label="+" onPress={submitName} style={{ marginLeft: 8, width: 52 }} />
         </View>
-        {names.includes(name.trim().toLowerCase()) && (
-          <Text style={styles.error}>Name ist schon vergeben</Text>
+        {nameError(name, game.players) && (
+          <Text style={styles.error}>{nameError(name, game.players)}</Text>
         )}
         {game.players.map((p) => (
           <View key={p.id} style={styles.listRow}>
@@ -200,23 +258,34 @@ function PlayingScreen({ game, setGame }: ScreenProps) {
       ),
     });
 
-  const addLatePlayer = () => {
-    const trimmed = lateName.trim();
-    if (!trimmed || game.players.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) {
-      return;
+  const undoOrRemove = (p: Player) => {
+    if (p.buyIns > 1) {
+      confirm('Rebuy zurücknehmen?', `Einen Einkauf von ${p.name} entfernen.`, () =>
+        changeBuyIns(p.id, -1),
+      );
+    } else {
+      confirm('Spieler entfernen?', `${p.name} wird aus dem Spiel entfernt.`, () =>
+        setGame({ ...game, players: game.players.filter((x) => x.id !== p.id) }),
+      );
     }
-    setGame({
-      ...game,
-      players: [...game.players, { id: newId(), name: trimmed, buyIns: 1, finalCents: null }],
-    });
-    setLateName('');
+  };
+
+  const submitLateName = () => {
+    const next = addPlayer(game, lateName);
+    if (next) {
+      setGame(next);
+      setLateName('');
+    }
   };
 
   return (
-    <Page title="Spiel läuft" subtitle={`Start-Geld: ${formatMoney(game.buyInCents, game.currency)}`}>
+    <Page title="Spiel läuft" subtitle={`Start-Geld: ${buyInLabel(game)}`}>
       <View style={styles.potBox}>
         <Text style={styles.potLabel}>Im Topf</Text>
         <Text style={styles.potValue}>{formatMoney(pot, game.currency)}</Text>
+        {game.chipsPerBuyIn !== null && (
+          <Text style={styles.potLabel}>{formatChips(totalPotStack(game))} im Spiel</Text>
+        )}
       </View>
 
       <Card>
@@ -228,19 +297,13 @@ function PlayingScreen({ game, setGame }: ScreenProps) {
                 {p.buyIns}× eingekauft · {formatMoney(investedCents(p, game.buyInCents), game.currency)}
               </Text>
             </View>
-            {p.buyIns > 1 && (
-              <Button
-                label="−"
-                small
-                secondary
-                onPress={() =>
-                  confirm('Rebuy zurücknehmen?', `Einen Einkauf von ${p.name} entfernen.`, () =>
-                    changeBuyIns(p.id, -1),
-                  )
-                }
-                style={{ marginRight: 8 }}
-              />
-            )}
+            <Button
+              label="−"
+              small
+              secondary
+              onPress={() => undoOrRemove(p)}
+              style={{ marginRight: 8, width: 40 }}
+            />
             <Button label="+ Rebuy" small onPress={() => changeBuyIns(p.id, 1)} />
           </View>
         ))}
@@ -255,14 +318,22 @@ function PlayingScreen({ game, setGame }: ScreenProps) {
             onChangeText={setLateName}
             placeholder="Name"
             placeholderTextColor={C.muted}
-            onSubmitEditing={addLatePlayer}
+            onSubmitEditing={submitLateName}
             autoCapitalize="words"
           />
-          <Button label="+" onPress={addLatePlayer} style={{ marginLeft: 8, width: 52 }} />
+          <Button label="+" onPress={submitLateName} style={{ marginLeft: 8, width: 52 }} />
         </View>
+        {nameError(lateName, game.players) && (
+          <Text style={styles.error}>{nameError(lateName, game.players)}</Text>
+        )}
       </Card>
 
-      <Button label="Spiel beenden – Endstände eingeben" onPress={() => setGame({ ...game, phase: 'ending' })} big />
+      <Button
+        label="Spiel beenden – Endstände eingeben"
+        disabled={game.players.length < 2}
+        onPress={() => setGame({ ...game, phase: 'ending' })}
+        big
+      />
       <Button
         label="Spiel abbrechen"
         secondary
@@ -279,76 +350,94 @@ function PlayingScreen({ game, setGame }: ScreenProps) {
 
 // ---------------------------------------------------------------- Ending
 
+function stackInputText(value: number | null, game: Game): string {
+  if (value === null) return '';
+  if (game.chipsPerBuyIn !== null) return String(value);
+  return formatMoney(value, '').trim().replace(/\./g, '');
+}
+
 function EndingScreen({ game, setGame }: ScreenProps) {
+  const chipMode = game.chipsPerBuyIn !== null;
   const [inputs, setInputs] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      game.players.map((p) => [
-        p.id,
-        p.finalCents === null ? '' : formatMoney(p.finalCents, '').trim().replace(/\./g, ''),
-      ]),
-    ),
+    Object.fromEntries(game.players.map((p) => [p.id, stackInputText(p.final, game)])),
   );
 
   const setInput = (id: string, text: string) => {
-    setInputs({ ...inputs, [id]: text });
-    const cents = text.trim() === '' ? null : parseMoney(text);
+    setInputs((prev) => ({ ...prev, [id]: text }));
+    const value = text.trim() === '' ? null : parseStack(text, game);
     setGame({
       ...game,
       players: game.players.map((p) =>
-        p.id === id ? { ...p, finalCents: cents !== null && cents >= 0 ? cents : null } : p,
+        p.id === id ? { ...p, final: value !== null && value >= 0 ? value : null } : p,
       ),
     });
   };
 
-  const pot = totalPotCents(game);
-  const entered = totalFinalCents(game);
+  const pot = totalPotStack(game);
+  const entered = totalFinalStack(game);
   const diff = entered - pot;
-  const allEntered = game.players.every((p) => p.finalCents !== null);
-  const invalid = game.players.filter((p) => {
-    const t = inputs[p.id]?.trim() ?? '';
-    return t !== '' && p.finalCents === null;
-  });
+  const allEntered = game.players.every((p) => p.final !== null);
+  const invalidIds = game.players
+    .filter((p) => (inputs[p.id]?.trim() ?? '') !== '' && p.final === null)
+    .map((p) => p.id);
 
   return (
-    <Page title="Endstände" subtitle="Wie viel Geld/Chips hat jeder am Ende vor sich?">
+    <Page
+      title="Endstände"
+      subtitle={
+        chipMode
+          ? 'Wie viele Chips hat jeder am Ende vor sich?'
+          : 'Wie viel Geld hat jeder am Ende vor sich?'
+      }
+    >
       <Card>
         {game.players.map((p) => (
           <View key={p.id} style={styles.playerRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.playerName}>{p.name}</Text>
               <Text style={styles.muted}>
-                eingezahlt {formatMoney(investedCents(p, game.buyInCents), game.currency)}
+                {chipMode
+                  ? `${p.buyIns}× eingekauft · ${formatChips(p.buyIns * game.chipsPerBuyIn!)}`
+                  : `eingezahlt ${formatMoney(investedCents(p, game.buyInCents), game.currency)}`}
               </Text>
             </View>
             <TextInput
               style={[
                 styles.input,
-                { width: 110, textAlign: 'right' },
-                invalid.includes(p) && { borderColor: C.red },
+                { width: 120, textAlign: 'right' },
+                invalidIds.includes(p.id) && { borderColor: C.red },
               ]}
-              value={inputs[p.id]}
+              value={inputs[p.id] ?? ''}
               onChangeText={(t) => setInput(p.id, t)}
-              keyboardType="decimal-pad"
-              placeholder="0"
+              keyboardType={chipMode ? 'number-pad' : 'decimal-pad'}
+              placeholder={chipMode ? 'Chips' : '0'}
               placeholderTextColor={C.muted}
             />
           </View>
         ))}
+        {invalidIds.length > 0 && (
+          <Text style={styles.error}>
+            {chipMode ? 'Bitte ganze Chip-Anzahl eingeben.' : 'Bitte gültigen Betrag eingeben.'}
+          </Text>
+        )}
       </Card>
 
       <Card>
-        <SummaryRow label="Im Topf (alle Einkäufe)" value={formatMoney(pot, game.currency)} />
-        <SummaryRow label="Eingegebene Endstände" value={formatMoney(entered, game.currency)} />
+        <SummaryRow
+          label={chipMode ? 'Chips im Spiel (alle Einkäufe)' : 'Im Topf (alle Einkäufe)'}
+          value={formatStack(pot, game)}
+        />
+        <SummaryRow label="Eingegebene Endstände" value={formatStack(entered, game)} />
         <SummaryRow
           label="Differenz"
-          value={formatMoney(diff, game.currency, true)}
+          value={formatStack(diff, game, true)}
           color={diff === 0 ? C.green : C.red}
         />
         {diff !== 0 && allEntered && (
           <Text style={styles.error}>
             {diff > 0
-              ? `Es wurde ${formatMoney(diff, game.currency)} zu viel eingetragen.`
-              : `Es fehlen noch ${formatMoney(-diff, game.currency)}.`}{' '}
+              ? `Es wurde${chipMode ? 'n' : ''} ${formatStack(diff, game)} zu viel eingetragen.`
+              : `Es fehlen noch ${formatStack(-diff, game)}.`}{' '}
             Bitte nochmal nachzählen – die Endstände müssen genau dem Topf entsprechen.
           </Text>
         )}
@@ -374,17 +463,21 @@ function EndingScreen({ game, setGame }: ScreenProps) {
 
 function ResultScreen({ game, setGame }: ScreenProps) {
   const transfers = settle(game);
-  const sorted = [...game.players].sort(
-    (a, b) => netCents(b, game.buyInCents) - netCents(a, game.buyInCents),
-  );
+
+  const share = () => {
+    Share.share({ message: resultText(game) }).catch(() => {
+      // Sharing is not supported everywhere (e.g. some desktop browsers).
+      Alert.alert('Teilen nicht möglich', resultText(game));
+    });
+  };
 
   const restartSamePlayers = () =>
     confirm('Neues Spiel?', 'Die aktuelle Abrechnung wird gelöscht.', () =>
       setGame({
-      ...game,
-      phase: 'setup',
-      startedAt: null,
-        players: game.players.map((p) => ({ ...p, id: newId(), buyIns: 1, finalCents: null })),
+        ...game,
+        phase: 'setup',
+        startedAt: null,
+        players: game.players.map((p) => ({ ...p, id: newId(), buyIns: 1, final: null })),
       }),
     );
 
@@ -410,31 +503,25 @@ function ResultScreen({ game, setGame }: ScreenProps) {
 
       <Card>
         <Label>Ergebnis pro Spieler</Label>
-        {sorted.map((p) => {
-          const net = netCents(p, game.buyInCents);
-          return (
-            <View key={p.id} style={styles.playerRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.playerName}>{p.name}</Text>
-                <Text style={styles.muted}>
-                  {p.buyIns}× eingekauft ({formatMoney(investedCents(p, game.buyInCents), game.currency)}) · Ende{' '}
-                  {formatMoney(p.finalCents ?? 0, game.currency)}
-                </Text>
-              </View>
-              <Text
-                style={[
-                  styles.netValue,
-                  { color: net > 0 ? C.green : net < 0 ? C.red : C.muted },
-                ]}
-              >
-                {formatMoney(net, game.currency, true)}
+        {ranking(game).map(({ player: p, net }) => (
+          <View key={p.id} style={styles.playerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.playerName}>{p.name}</Text>
+              <Text style={styles.muted}>
+                {p.buyIns}× eingekauft ({formatMoney(investedCents(p, game.buyInCents), game.currency)}) · Ende{' '}
+                {formatStack(p.final ?? 0, game)}
               </Text>
             </View>
-          );
-        })}
+            <Text
+              style={[styles.netValue, { color: net > 0 ? C.green : net < 0 ? C.red : C.muted }]}
+            >
+              {formatMoney(net, game.currency, true)}
+            </Text>
+          </View>
+        ))}
       </Card>
 
-      <Button label="Ergebnis teilen" big onPress={() => Share.share({ message: resultText(game) })} />
+      <Button label="Ergebnis teilen" big onPress={share} />
       <Button
         label="Endstände korrigieren"
         secondary
@@ -452,7 +539,12 @@ function ResultScreen({ game, setGame }: ScreenProps) {
         secondary
         onPress={() =>
           confirm('Neues Spiel?', 'Die aktuelle Abrechnung wird gelöscht.', () =>
-            setGame({ ...newGame(), buyInCents: game.buyInCents, currency: game.currency }),
+            setGame({
+              ...newGame(),
+              buyInCents: game.buyInCents,
+              currency: game.currency,
+              chipsPerBuyIn: game.chipsPerBuyIn,
+            }),
           )
         }
         style={{ marginTop: 12 }}
@@ -486,6 +578,30 @@ function SummaryRow({ label, value, color }: { label: string; value: string; col
     <View style={styles.summaryRow}>
       <Text style={styles.muted}>{label}</Text>
       <Text style={[styles.summaryValue, color ? { color } : null]}>{value}</Text>
+    </View>
+  );
+}
+
+function Segmented({
+  options,
+  selected,
+  onSelect,
+}: {
+  options: string[];
+  selected: number;
+  onSelect: (index: number) => void;
+}) {
+  return (
+    <View style={styles.segmented}>
+      {options.map((option, i) => (
+        <Pressable
+          key={option}
+          onPress={() => onSelect(i)}
+          style={[styles.segment, i === selected && styles.segmentActive]}
+        >
+          <Text style={[styles.segmentText, i === selected && { color: '#1a1a1a' }]}>{option}</Text>
+        </Pressable>
+      ))}
     </View>
   );
 }
@@ -601,4 +717,8 @@ const styles = StyleSheet.create({
   buttonSmall: { paddingVertical: 8, paddingHorizontal: 12 },
   buttonBig: { paddingVertical: 16 },
   buttonText: { color: '#1a1a1a', fontSize: 16, fontWeight: '700' },
+  segmented: { flexDirection: 'row', backgroundColor: C.input, borderRadius: 10, padding: 3 },
+  segment: { flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: 'center' },
+  segmentActive: { backgroundColor: C.gold },
+  segmentText: { color: C.text, fontSize: 15, fontWeight: '600' },
 });

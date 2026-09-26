@@ -1,20 +1,52 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { formatMoney, Game, netCents, parseMoney, settle, totalFinalCents, totalPotCents } from './logic';
+import {
+  formatChips,
+  formatMoney,
+  Game,
+  netsCents,
+  parseChips,
+  parseMoney,
+  resultText,
+  settle,
+  totalFinalStack,
+  totalPotCents,
+  totalPotStack,
+} from './logic';
 
-function game(buyInCents: number, players: [string, number, number][]): Game {
+function game(
+  buyInCents: number,
+  players: [string, number, number][],
+  chipsPerBuyIn: number | null = null,
+): Game {
   return {
     phase: 'result',
     buyInCents,
     currency: '€',
+    chipsPerBuyIn,
     startedAt: 0,
-    players: players.map(([name, buyIns, finalCents], i) => ({
+    players: players.map(([name, buyIns, final], i) => ({
       id: String(i),
       name,
       buyIns,
-      finalCents,
+      final,
     })),
   };
+}
+
+/** Applies all transfers and checks that everybody ends up even. */
+function expectFullySettled(g: Game) {
+  const nets = netsCents(g);
+  expect(nets.reduce((a, b) => a + b, 0)).toBe(0);
+  const balance = new Map(g.players.map((p, i) => [p.name, nets[i]]));
+  const transfers = settle(g);
+  expect(transfers.length).toBeLessThanOrEqual(Math.max(0, g.players.length - 1));
+  for (const t of transfers) {
+    expect(t.cents).toBeGreaterThan(0);
+    balance.set(t.from, balance.get(t.from)! + t.cents);
+    balance.set(t.to, balance.get(t.to)! - t.cents);
+  }
+  for (const v of balance.values()) expect(v).toBe(0);
 }
 
 describe('parseMoney', () => {
@@ -34,16 +66,34 @@ describe('parseMoney', () => {
   });
 });
 
-describe('formatMoney', () => {
-  it('formats German style', () => {
+describe('parseChips', () => {
+  it.each([
+    ['1500', 1500],
+    ['1.500', 1500],
+    [' 0 ', 0],
+    ['', null],
+    ['12,5', null],
+    ['-5', null],
+  ])('parses %p', (input, expected) => {
+    expect(parseChips(input)).toBe(expected);
+  });
+});
+
+describe('formatting', () => {
+  it('formats money German style', () => {
     expect(formatMoney(123456, '€')).toBe('1.234,56 €');
     expect(formatMoney(1000, '€')).toBe('10 €');
     expect(formatMoney(-550, '€')).toBe('-5,50 €');
     expect(formatMoney(550, '€', true)).toBe('+5,50 €');
   });
+
+  it('formats chips', () => {
+    expect(formatChips(12500)).toBe('12.500 Chips');
+    expect(formatChips(-300, true)).toBe('-300 Chips');
+  });
 });
 
-describe('settle', () => {
+describe('settle (money)', () => {
   it('handles re-buys and balances out', () => {
     // Buy-in 10 €. Anna rebought twice (30 € in), Ben once (10 €), Cleo once (10 €).
     const g = game(1000, [
@@ -52,7 +102,7 @@ describe('settle', () => {
       ['Cleo', 1, 1500],
     ]);
     expect(totalPotCents(g)).toBe(5000);
-    expect(g.players.map((p) => netCents(p, g.buyInCents))).toEqual([-3000, 2500, 500]);
+    expect(netsCents(g)).toEqual([-3000, 2500, 500]);
     expect(settle(g)).toEqual([
       { from: 'Anna', to: 'Ben', cents: 2500 },
       { from: 'Anna', to: 'Cleo', cents: 500 },
@@ -67,19 +117,75 @@ describe('settle', () => {
       ['D', 1, 4500],
       ['E', 2, 4000],
     ]);
-    expect(totalFinalCents(g)).toBe(totalPotCents(g));
-    const transfers = settle(g);
-    expect(transfers.length).toBeLessThanOrEqual(4);
-    const balance = new Map(g.players.map((p) => [p.name, netCents(p, g.buyInCents)]));
-    for (const t of transfers) {
-      expect(t.cents).toBeGreaterThan(0);
-      balance.set(t.from, balance.get(t.from)! + t.cents);
-      balance.set(t.to, balance.get(t.to)! - t.cents);
-    }
-    for (const v of balance.values()) expect(v).toBe(0);
+    expect(totalFinalStack(g)).toBe(totalPotStack(g));
+    expectFullySettled(g);
   });
 
   it('returns nothing when everybody breaks even', () => {
     expect(settle(game(1000, [['A', 1, 1000], ['B', 2, 2000]]))).toEqual([]);
+  });
+});
+
+describe('settle (chips)', () => {
+  it('converts chips to money', () => {
+    // 10 € = 1000 chips.
+    const g = game(
+      1000,
+      [
+        ['Anna', 2, 0],
+        ['Ben', 1, 2500],
+        ['Cleo', 1, 1500],
+      ],
+      1000,
+    );
+    expect(totalPotStack(g)).toBe(4000);
+    expect(netsCents(g)).toEqual([-2000, 1500, 500]);
+    expect(settle(g)).toEqual([
+      { from: 'Anna', to: 'Ben', cents: 1500 },
+      { from: 'Anna', to: 'Cleo', cents: 500 },
+    ]);
+  });
+
+  it('distributes rounding cents so the result still adds up', () => {
+    // 10 € = 300 chips, so 100 chips are worth 3,333… €.
+    const g = game(
+      1000,
+      [
+        ['A', 1, 400],
+        ['B', 1, 100],
+        ['C', 1, 400],
+      ],
+      300,
+    );
+    expect(netsCents(g)).toEqual([334, -667, 333]);
+    expectFullySettled(g);
+  });
+
+  it('stays exact over many odd splits', () => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const chips = 7 + (seed % 13) * 37;
+      const buyIns = [1 + (seed % 3), 1, 2, 1 + (seed % 2)];
+      const total = buyIns.reduce((a, b) => a + b, 0) * chips;
+      const a = (seed * 7919) % (total + 1);
+      const b = (seed * 104729) % (total - a + 1);
+      const c = (seed * 31) % (total - a - b + 1);
+      const finals = [a, b, c, total - a - b - c];
+      const g = game(
+        500 + seed,
+        finals.map((f, i): [string, number, number] => [`P${i}`, buyIns[i], f]),
+        chips,
+      );
+      expectFullySettled(g);
+    }
+  });
+});
+
+describe('resultText', () => {
+  it('lists results and payments', () => {
+    const g = game(1000, [['Anna', 2, 0], ['Ben', 1, 3000]], 1000);
+    const text = resultText(g);
+    expect(text).toContain('Buy-in 10 € = 1.000 Chips');
+    expect(text).toContain('Ben: +20 € (1x eingekauft, Ende 3.000 Chips)');
+    expect(text).toContain('• Anna → Ben: 20 €');
   });
 });
