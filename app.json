@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Poker Schulden",
+    "slug": "poker-schulden",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pokerschulden.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0f3d2e",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.pokerschulden.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f3d2e"
+    }
+  }
+}
