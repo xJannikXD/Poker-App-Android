@@ -27,6 +27,7 @@ import {
   parseMoney,
   parseStack,
   Player,
+  playerNetCents,
   ranking,
   resultText,
   settle,
@@ -248,7 +249,36 @@ function SetupScreen({ game, setGame }: ScreenProps) {
 
 function PlayingScreen({ game, setGame }: ScreenProps) {
   const [lateName, setLateName] = useState('');
+  const [cashOutId, setCashOutId] = useState<string | null>(null);
+  const [cashOutText, setCashOutText] = useState('');
+  const chipMode = game.chipsPerBuyIn !== null;
   const pot = totalPotCents(game);
+  const cashedOut = game.players.reduce((sum, p) => sum + (p.out ? (p.final ?? 0) : 0), 0);
+  const cashOutValue = parseStack(cashOutText, game);
+  // Players still at the table first, those who left at the bottom.
+  const players = [...game.players.filter((p) => !p.out), ...game.players.filter((p) => p.out)];
+
+  const updatePlayer = (id: string, change: Partial<Player>) =>
+    setGame({
+      ...game,
+      players: game.players.map((p) => (p.id === id ? { ...p, ...change } : p)),
+    });
+
+  const startCashOut = (p: Player) => {
+    setCashOutId(p.id);
+    setCashOutText('');
+  };
+
+  const confirmCashOut = () => {
+    if (cashOutId === null || cashOutValue === null || cashOutValue < 0) return;
+    updatePlayer(cashOutId, { out: true, final: cashOutValue });
+    setCashOutId(null);
+  };
+
+  const bringBack = (p: Player) =>
+    confirm('Zurückholen?', `${p.name} spielt wieder mit, der eingetragene Stand wird gelöscht.`, () =>
+      updatePlayer(p.id, { out: false, final: null }),
+    );
 
   const changeBuyIns = (id: string, delta: number) =>
     setGame({
@@ -283,30 +313,97 @@ function PlayingScreen({ game, setGame }: ScreenProps) {
       <View style={styles.potBox}>
         <Text style={styles.potLabel}>Im Topf</Text>
         <Text style={styles.potValue}>{formatMoney(pot, game.currency)}</Text>
-        {game.chipsPerBuyIn !== null && (
+        {chipMode && (
           <Text style={styles.potLabel}>{formatChips(totalPotStack(game))} im Spiel</Text>
+        )}
+        {cashedOut > 0 && (
+          <Text style={styles.potLabel}>
+            Noch am Tisch: {formatStack(totalPotStack(game) - cashedOut, game)}
+          </Text>
         )}
       </View>
 
       <Card>
-        {game.players.map((p) => (
-          <View key={p.id} style={styles.playerRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.playerName}>{p.name}</Text>
-              <Text style={styles.muted}>
-                {p.buyIns}× eingekauft · {formatMoney(investedCents(p, game.buyInCents), game.currency)}
-              </Text>
+        {players.map((p) =>
+          p.out ? (
+            <View key={p.id} style={styles.playerBlock}>
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.playerName, { color: C.muted }]}>{p.name} · ausgestiegen</Text>
+                  <Text style={styles.muted}>
+                    {p.buyIns}× eingekauft · raus mit {formatStack(p.final ?? 0, game)} ·{' '}
+                    <NetText cents={playerNetCents(p, game)} currency={game.currency} />
+                  </Text>
+                </View>
+                <Button label="Zurückholen" small secondary onPress={() => bringBack(p)} />
+              </View>
             </View>
-            <Button
-              label="−"
-              small
-              secondary
-              onPress={() => undoOrRemove(p)}
-              style={{ marginRight: 8, width: 40 }}
-            />
-            <Button label="+ Rebuy" small onPress={() => changeBuyIns(p.id, 1)} />
-          </View>
-        ))}
+          ) : (
+            <View key={p.id} style={styles.playerBlock}>
+              <View style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.playerName}>{p.name}</Text>
+                  <Text style={styles.muted}>
+                    {p.buyIns}× eingekauft · {formatMoney(investedCents(p, game.buyInCents), game.currency)}
+                  </Text>
+                  <Pressable hitSlop={8} onPress={() => startCashOut(p)}>
+                    <Text style={styles.link}>Aussteigen ›</Text>
+                  </Pressable>
+                </View>
+                <Button
+                  label="−"
+                  small
+                  secondary
+                  onPress={() => undoOrRemove(p)}
+                  style={{ marginRight: 8, width: 40 }}
+                />
+                <Button label="+ Rebuy" small onPress={() => changeBuyIns(p.id, 1)} />
+              </View>
+              {cashOutId === p.id && (
+                <View style={styles.cashOutBox}>
+                  <Text style={[styles.muted, { marginBottom: 8 }]}>
+                    Mit {chipMode ? 'wie vielen Chips' : 'wie viel Geld'} steigt {p.name} aus?
+                  </Text>
+                  <View style={styles.row}>
+                    <TextInput
+                      style={[styles.input, { flex: 1, minWidth: 0, textAlign: 'right' }]}
+                      value={cashOutText}
+                      onChangeText={setCashOutText}
+                      onSubmitEditing={confirmCashOut}
+                      keyboardType={chipMode ? 'number-pad' : 'decimal-pad'}
+                      placeholder={chipMode ? 'Chips' : '0'}
+                      placeholderTextColor={C.muted}
+                      autoFocus
+                    />
+                    <Button
+                      label="OK"
+                      small
+                      disabled={cashOutValue === null || cashOutValue < 0}
+                      onPress={confirmCashOut}
+                      style={{ marginLeft: 8, width: 52 }}
+                    />
+                    <Button
+                      label="✕"
+                      small
+                      secondary
+                      onPress={() => setCashOutId(null)}
+                      style={{ marginLeft: 8, width: 40 }}
+                    />
+                  </View>
+                  {cashOutValue !== null && cashOutValue >= 0 && (
+                    <Text style={[styles.muted, { marginTop: 8 }]}>
+                      Ergebnis:{' '}
+                      <NetText
+                        cents={playerNetCents({ ...p, final: cashOutValue }, game)}
+                        currency={game.currency}
+                      />
+                    </Text>
+                  )}
+                </View>
+              )}
+            </View>
+          ),
+        )}
       </Card>
 
       <Card>
@@ -396,6 +493,7 @@ function EndingScreen({ game, setGame }: ScreenProps) {
             <View style={{ flex: 1 }}>
               <Text style={styles.playerName}>{p.name}</Text>
               <Text style={styles.muted}>
+                {p.out ? 'ausgestiegen · ' : ''}
                 {chipMode
                   ? `${p.buyIns}× eingekauft · ${formatChips(p.buyIns * game.chipsPerBuyIn!)}`
                   : `eingezahlt ${formatMoney(investedCents(p, game.buyInCents), game.currency)}`}
@@ -477,7 +575,7 @@ function ResultScreen({ game, setGame }: ScreenProps) {
         ...game,
         phase: 'setup',
         startedAt: null,
-        players: game.players.map((p) => ({ ...p, id: newId(), buyIns: 1, final: null })),
+        players: game.players.map((p) => ({ id: newId(), name: p.name, buyIns: 1, final: null })),
       }),
     );
 
@@ -563,6 +661,11 @@ function Page({ title, subtitle, children }: { title: string; subtitle?: string;
       {children}
     </ScrollView>
   );
+}
+
+function NetText({ cents, currency }: { cents: number; currency: string }) {
+  const color = cents > 0 ? C.green : cents < 0 ? C.red : C.muted;
+  return <Text style={{ color, fontWeight: '700' }}>{formatMoney(cents, currency, true)}</Text>;
 }
 
 function Card({ children }: { children: ReactNode }) {
@@ -687,6 +790,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: C.cardLight,
   },
+  playerBlock: {
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: C.cardLight,
+  },
+  link: { color: C.gold, fontSize: 14, fontWeight: '600', marginTop: 6 },
+  cashOutBox: { backgroundColor: C.cardLight, borderRadius: 10, padding: 10, marginTop: 10 },
   playerName: { color: C.text, fontSize: 17, fontWeight: '600' },
   potBox: { alignItems: 'center', marginBottom: 14 },
   potLabel: { color: C.muted, fontSize: 14 },

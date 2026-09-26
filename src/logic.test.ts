@@ -7,6 +7,7 @@ import {
   netsCents,
   parseChips,
   parseMoney,
+  playerNetCents,
   resultText,
   settle,
   totalFinalStack,
@@ -187,5 +188,14 @@ describe('resultText', () => {
     expect(text).toContain('Buy-in 10 € = 1.000 Chips');
     expect(text).toContain('Ben: +20 € (1x eingekauft, Ende 3.000 Chips)');
     expect(text).toContain('• Anna → Ben: 20 €');
+  });
+});
+
+describe('playerNetCents', () => {
+  it('shows the result of a single player', () => {
+    const money = game(1000, [['Anna', 2, 500]]);
+    expect(playerNetCents(money.players[0], money)).toBe(-1500);
+    const chips = game(1000, [['Anna', 1, 400]], 300);
+    expect(playerNetCents(chips.players[0], chips)).toBe(333);
   });
 });

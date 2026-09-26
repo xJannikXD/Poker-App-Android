@@ -13,6 +13,8 @@ Abends ausrechnet, wer wem wie viel schuldet.
    Start-Geld ein. Mit **−** lässt sich ein versehentlicher Rebuy zurücknehmen
    (bzw. ein versehentlich hinzugefügter Spieler wieder entfernen).
    Spieler, die später dazukommen, können ebenfalls noch hinzugefügt werden.
+   Wer früher geht, tippt auf **Aussteigen** und trägt seinen Stand direkt ein – die App
+   zeigt sofort sein Ergebnis, und der Wert ist am Ende schon ausgefüllt.
    Oben steht immer, wie viel im Topf ist.
 3. **Endstände** – Für jeden Spieler eintragen, wie viel Geld bzw. wie viele Chips er am
    Ende vor sich hat. Die App prüft, ob die Summe genau dem Topf entspricht, und zeigt
@@ -24,29 +26,62 @@ Abends ausrechnet, wer wem wie viel schuldet.
 Das laufende Spiel wird automatisch auf dem Gerät gespeichert – auch wenn die App
 geschlossen wird, geht nichts verloren.
 
-## Starten
+## Installieren
 
-Voraussetzung: [Node.js](https://nodejs.org) (LTS) und die App **Expo Go** auf dem Handy
-([Android](https://play.google.com/store/apps/details?id=host.exp.exponent) /
-[iOS](https://apps.apple.com/app/expo-go/id982107779)).
+Für alle Wege brauchst du einmalig einen Computer mit [Node.js](https://nodejs.org) (LTS)
+und diesen Code (auf GitHub: **Code → Download ZIP**, entpacken). Im Projektordner:
 
 ```bash
 npm install
-npm start
 ```
 
-Dann den angezeigten QR-Code mit Expo Go (Android) bzw. der Kamera-App (iOS) scannen.
-Im Browser geht's mit `npm run web`.
+### Android: echte App (APK) – kostenlos
 
-### Eigene App-Datei bauen (optional)
+1. Kostenloses Konto auf [expo.dev](https://expo.dev/signup) anlegen.
+2. Im Projektordner:
+   ```bash
+   npx eas-cli@latest login
+   npx eas-cli@latest build -p android --profile preview
+   ```
+   Fragen beim ersten Mal (Projekt anlegen, Keystore erzeugen) mit **Yes** bestätigen.
+   Der Build läuft in der Expo-Cloud und dauert ca. 10–20 Minuten.
+3. Am Ende gibt es einen Link und einen QR-Code. Auf dem Handy öffnen, die **.apk**
+   herunterladen und antippen. Android fragt einmalig, ob der Browser „Apps aus
+   unbekannten Quellen installieren“ darf → erlauben → **Installieren**.
 
-Mit [EAS Build](https://docs.expo.dev/build/introduction/) lässt sich eine installierbare
-APK (Android) bzw. ein iOS-Build erzeugen, ohne Android Studio oder Xcode:
+Die APK kann man auch einfach an Freunde weiterschicken.
+
+### iPhone: als Web-App auf dem Home-Bildschirm – kostenlos
+
+Apple erlaubt echte Apps nur über ein kostenpflichtiges Entwicklerkonto. Die Web-Version
+kann aber genauso benutzt werden:
+
+1. Web-Version bauen:
+   ```bash
+   npx expo export --platform web
+   ```
+2. Den entstandenen Ordner `dist` online stellen, z.B. per Drag & Drop auf
+   [app.netlify.com/drop](https://app.netlify.com/drop). Du bekommst eine Adresse.
+3. Die Adresse auf dem iPhone in **Safari** öffnen → **Teilen** → **Zum Home-Bildschirm**.
+
+Das funktioniert genauso auf Android. Das laufende Spiel wird auch hier auf dem Gerät gespeichert.
+
+### iPhone: echte App (mit Apple-Entwicklerkonto)
+
+Mit dem [Apple Developer Program](https://developer.apple.com/programs/) (99 €/Jahr):
 
 ```bash
-npx eas-cli@latest build -p android --profile preview   # APK
-npx eas-cli@latest build -p ios
+npx eas-cli@latest device:create                     # iPhone registrieren
+npx eas-cli@latest build -p ios --profile preview    # Build zum Installieren
 ```
+
+### Nur mal ausprobieren: Expo Go
+
+App **Expo Go** installieren
+([Android](https://play.google.com/store/apps/details?id=host.exp.exponent) /
+[iOS](https://apps.apple.com/app/expo-go/id982107779)), dann am Computer `npm start`
+und den QR-Code scannen (Handy und Computer im selben WLAN). Läuft nur, solange der
+Computer an ist – für den Pokerabend also besser einer der Wege oben.
 
 ## Entwicklung
 

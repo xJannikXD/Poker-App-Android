@@ -11,6 +11,8 @@ export type Player = {
    * chips when the game has `chipsPerBuyIn` set.
    */
   final: number | null;
+  /** True once the player left early; `final` then holds the stack they left with. */
+  out?: boolean;
 };
 
 export type Phase = 'setup' | 'playing' | 'ending' | 'result';
@@ -118,6 +120,16 @@ export function totalPotStack(game: Game): number {
 /** Sum of all entered final stacks, in stack units (cents or chips). */
 export function totalFinalStack(game: Game): number {
   return game.players.reduce((sum, p) => sum + (p.final ?? 0), 0);
+}
+
+/**
+ * Win (+) or loss (-) of a single player in cents. In chip mode this is
+ * rounded to the nearest cent; use `netsCents` for the exact settlement.
+ */
+export function playerNetCents(player: Player, game: Game): number {
+  const diff = (player.final ?? 0) - player.buyIns * stackPerBuyIn(game);
+  if (game.chipsPerBuyIn === null) return diff;
+  return Math.round((diff * game.buyInCents) / game.chipsPerBuyIn);
 }
 
 /**
